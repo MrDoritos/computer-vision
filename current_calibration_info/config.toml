@@ -1,0 +1,41 @@
+CreationDate = 2024-04-20T16:49:36.064917
+camera_count = 2
+
+[cam_1]
+port = 1
+rotation_count = 0
+error = 0.789
+exposure = "null"
+grid_count = 40
+size = [800, 600]
+matrix = [[647.4941915194619, 0.0, 389.984584964543], [0.0, 645.9265175368009, 312.70326837820306], [0.0, 0.0, 1.0]]
+distortions = [-0.393493414918734, 0.2353678583252112, -0.0023757917798608876, -0.007207499508838287, -0.09137343061867051]
+translation = [0.0, 0.0, 0.0]
+rotation = [0.0, 0.0, 0.0]
+
+[cam_2]
+port = 2
+rotation_count = 0
+error = 0.818
+exposure = "null"
+grid_count = 40
+size = [800, 600]
+matrix = [[637.3289936272535, 0.0, 395.86901903905743], [0.0, 636.0193477396009, 299.8138738811564], [0.0, 0.0, 1.0]]
+distortions = [-0.39494272519447565, 0.31851236473427197, -0.0007302641034585475, -0.006811078380164881, -0.23671498303923616]
+translation = [-0.05623814121242313, 0.000770851080901478, -0.0015429499083027362]
+rotation = [-0.010898870877482413, 0.04474025752554947, 0.011090739638479076]
+
+[capture_volume]
+stage = 2
+origin_sync_index = "null"
+
+[charuco]
+columns = 9
+rows = 11
+board_height = 11.0
+board_width = 8.5
+dictionary = "DICT_4X4_50"
+units = "inch"
+aruco_scale = 0.75
+square_size_overide_cm = 1.9
+inverted = false
