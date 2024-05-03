@@ -2,13 +2,6 @@
 import cv2
 import os
 
-# Create output directories if they don't exist
-output_dir_left = 'calibration_images/left'
-output_dir_right = 'calibration_images/right'
-
-os.makedirs(output_dir_left, exist_ok=True)
-os.makedirs(output_dir_right, exist_ok=True)
-
 # Get the list of available camera devices
 camera_ids = [id for id in range(10)]  # Assuming cameras are indexed from 0 to 9
 
@@ -91,19 +84,19 @@ while True:
     cv2.imshow('Left Camera', frame_left)
     cv2.imshow('Right Camera', frame_right)
 
-    if frame_count % 10 == 0:
+    #if frame_count % 10 == 0:
         # Save frames to output directories
-        output_path_left = os.path.join(output_dir_left, f'left_{frame_count}.jpg')
-        output_path_right = os.path.join(output_dir_right, f'right_{frame_count}.jpg')
+        #output_path_left = os.path.join(output_dir_left, f'left_{frame_count}.jpg')
+        #output_path_right = os.path.join(output_dir_right, f'right_{frame_count}.jpg')
 
-        cv2.imwrite(output_path_left, frame_left)
-        cv2.imwrite(output_path_right, frame_right)
+        #cv2.imwrite(output_path_left, frame_left)
+        #cv2.imwrite(output_path_right, frame_right)
 
-        print("Frame " + str(frame_count) + " saved as " + str(image_count))
+        #print("Frame " + str(frame_count) + " saved as " + str(image_count))
 
-        image_count += 1
+        #image_count += 1
 
-    frame_count += 1
+    #frame_count += 1
 
     # Exit loop if 'q' is pressed
     if cv2.waitKey(1) & 0xFF == ord('q'):
