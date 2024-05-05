@@ -74,7 +74,7 @@ frame_count = 0  # Counter for captured frames
 image_count = 0
    
 window_size = 3
-min_disp = 16
+min_disp = 8
 num_disp = 112-min_disp
 stereo = cv2.StereoSGBM.create(minDisparity = min_disp,
     numDisparities = num_disp,
@@ -89,20 +89,30 @@ stereo = cv2.StereoSGBM.create(minDisparity = min_disp,
 )
 
 do_undistort = False
-mtx_left = None
-dist_left = None
-mtx_right = None
-dist_right = None
+Kl, Dl, Kr, Dr, R, T, E, F = None, None, None, None, None, None, None, None
 
-if os.path.exists("intrinsic_calibration_params_left.npz") and os.path.exists("intrinsic_calibration_params_right.npz"):
-    print("Loading intrinsic calibration parameters...")
-    left_params = np.load("intrinsic_calibration_params_left.npz")
-    right_params = np.load("intrinsic_calibration_params_right.npz")
-    do_undistort = True
-    mtx_left = left_params['mtx']
-    dist_left = left_params['dist']
-    mtx_right = right_params['mtx']
-    dist_right = right_params['dist']
+if not os.path.exists("extrinsic_chessboard_calibration_params.npz"):
+    exit()
+
+print("Loading extrinsic calibration parameters...")
+params = np.load("extrinsic_chessboard_calibration_params.npz")
+do_undistort = True
+Kl = params["Kl"]
+Dl = params["Dl"]
+Kr = params["Kr"]
+Dr = params["Dr"]
+R = params["R"]
+T = params["T"]
+E = params["E"]
+F = params["F"]
+
+ret_left, frame_left = cap_left.read()
+ret_right, frame_right = cap_right.read()
+
+R1, R2, P1, P2, Q, validRoi1, validRoi2 = cv2.stereoRectify(Kl, Dl, Kr, Dr, frame_left.shape[:2], R, T, alpha=0)
+
+xmap1, ymap1 = cv2.initUndistortRectifyMap(Kl, Dl, R1, P1, frame_left.shape[:2], cv2.CV_32FC1)
+xmap2, ymap2 = cv2.initUndistortRectifyMap(Kr, Dr, R2, P2, frame_right.shape[:2], cv2.CV_32FC1)
 
 while True:
     ret_left, frame_left = cap_left.read()
@@ -112,9 +122,8 @@ while True:
         print("Error: Failed to capture frame from one or both cameras.")
         break
 
-    if do_undistort:
-        frame_left = cv2.undistort(frame_left, mtx_left, dist_left)
-        frame_right = cv2.undistort(frame_right, mtx_right, dist_right)
+    frame_left = cv2.remap(frame_left, xmap1, ymap1, cv2.INTER_LINEAR)
+    frame_right = cv2.remap(frame_right, xmap2, ymap2, cv2.INTER_LINEAR)
 
     # Display frames (optional)
     cv2.imshow('Left Camera', frame_left)

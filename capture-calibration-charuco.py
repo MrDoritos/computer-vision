@@ -119,7 +119,7 @@ print("Calculating calibration parameters")
 
 def camera_calibration(camera:str, objpoints, imgpoints):
     ret, mtx, dist, rvecs, tvecs = cv2.aruco.calibrateCameraCharuco(objpoints, imgpoints, board, frame_left.shape[:2], None, None)
-    np.savez('calibration_params_' + camera + '.npz', mtx=mtx, dist=dist, rvecs=rvecs, tvecs=tvecs)
+    np.savez('intrinsic_calibration_params_' + camera + '.npz', mtx=mtx, dist=dist, rvecs=rvecs, tvecs=tvecs)
     return mtx, dist, rvecs, tvecs
 
 #mtx_left, dist_left, rvecs_left, tvecs_left = camera_calibration('left', objpoints, imgpoints_left)
