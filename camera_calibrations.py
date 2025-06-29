@@ -146,7 +146,7 @@ class Lens:
         self.set_focal_length(Intrinsics.focal_length(effective_focal_length, self.sensor.get_crop_factor()))
 
     def __repr__(self, pretty:bool=False):
-        s = f'[sensor: {self.sensor.__repr__(pretty)}, image: {self.image.__repr__(pretty)}, F35: {self.get_focal_length()}mm, Feff: {self.get_effective_focal_length()}mm, Frel: {self.get_relative_focal_length()}]'
+        s = f'[sensor: {self.sensor.__repr__(pretty)}, image: {self.image.__repr__(pretty)}, F35: {self.get_focal_length()}mm, Fefl: {self.get_effective_focal_length()}mm, Frel: {self.get_relative_focal_length()}]'
         if pretty:
             return s + '\n'
         return s
@@ -192,7 +192,7 @@ class ArucoImage:
         if self.image is None:
             return False
         self.gray = cv2.cvtColor(self.image, cv2.COLOR_BGR2GRAY)
-        self.shape = self.gray.shape[:2]
+        self.shape = self.gray.shape[::-1]
         return True
 
     def detect_markers(self, aruco:ArucoHelper):
@@ -328,6 +328,8 @@ class ArucoCamera:
 
     def get_intrinsics(self, pixel_size):
         image = Image(self.shape[0], self.shape[1])
+        ss=image.to_scale(pixel_size)
+        sensor = Sensor(ss.width, ss.height, pixel_size)
         ins = self.intrinsics
         mtx = ins['mtx']
         fx=mtx[0][0]
@@ -335,11 +337,10 @@ class ArucoCamera:
         px=mtx[0][2]
         py=mtx[1][2]
         length=image.get_length()
-        fxr=.5-(length/fx)
-        fyr=.5-(length/fy)
-        f35=Util.diagonal(1/fxr,1/fyr)*math.sqrt(2)
-        ss=image.to_scale(pixel_size)
-        sensor = Sensor(ss.width, ss.height, pixel_size)
+        fxr=length/fx
+        fyr=length/fy
+        efl=Util.diagonal(fxr,fyr)*math.sqrt(2)
+        f35=Intrinsics.focal_length(efl, sensor.get_crop_factor())
         return Lens(sensor, image, f35)
 
     def save_undistort_preview(self, path=None, image:ArucoImage=None):
