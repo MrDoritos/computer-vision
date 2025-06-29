@@ -346,7 +346,7 @@ class ArucoCamera:
         length=image.get_length()
         fxr=length/fx
         fyr=length/fy
-        efl=Util.diagonal(fxr,fyr)*math.sqrt(2)
+        efl=Util.diagonal(fxr,fyr)*(math.sqrt(2)/2)
         f35=Intrinsics.focal_length(efl, sensor.get_crop_factor())
         return Lens(sensor, image, f35)
 
