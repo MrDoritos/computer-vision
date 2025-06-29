@@ -162,6 +162,7 @@ class ArucoHelper:
         self.board = self.get_board()
         self.objp = self.get_objp()
         self.dictionary = self.get_dictionary()
+        self.criteria = self.get_criteria()
 
     def get_objp(self):
         objp = np.zeros((self.width * self.height, 3), np.float32)
@@ -175,6 +176,9 @@ class ArucoHelper:
     
     def get_dictionary(self):
         return self.board.getDictionary()
+    
+    def get_criteria(self):
+        return (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001)
     
 class ArucoImage:
     def __init__(self, image_path):
@@ -262,6 +266,7 @@ class ArucoCamera:
         self.charuco_ids = None
         self.shape = None
         self.intrinsics = None
+        self.failed_image_indicies=None
         self.images = self.get_images()
 
     def get_images(self):
@@ -280,11 +285,13 @@ class ArucoCamera:
         self.object_points = []
         self.charuco_corners = []
         self.charuco_ids = []
+        self.failed_image_indicies = []
         self.shape = None
 
-        for image in self.images:
+        for i,image in enumerate(self.images):
             if not image.process(aruco):
                 print(f'{image.image_path} Error: {image.get_error()}')
+                self.failed_image_indicies.append(i)
                 continue
             print(f'Processed image {image.image_path}')
 
@@ -430,6 +437,7 @@ class ArucoRig:
     def __init__(self, rig_path):
         self.rig_path = rig_path
         self.cameras = []
+        self.extrinsics = None
         self.find_cameras(self.rig_path)
 
     def has_cameras(self):
@@ -456,13 +464,57 @@ class ArucoRig:
     def get_valid_camera_count(self):
         return len(self.get_valid_cameras())
 
+    def save_extrinsics(self):
+        json_path = os.path.join(self.rig_path, 'rig_extrinsics.json')
+        npz_path = os.path.join(self.rig_path, 'rig_extrinsics.npz')
+
+        ext=self.extrinsics
+
+        ret,Kl,Dl,Kr,Dr,R,T,E,F=ext.values()
+
+        jobj = {
+            'ret':ext['ret'],
+            'Kl':ext['Kl'].tolist(),
+            'Dl':ext['Dl'].tolist(),
+            'Kr':ext['Kr'].tolist(),
+            'Dr':ext['Dr'].tolist(),
+            'R':ext['R'].tolist(),
+            'T':ext['T'].tolist(),
+            'E':ext['E'].tolist(),
+            'F':ext['F'].tolist(),
+        }
+
+        with open(json_path, 'w') as file:
+            json.dump(jobj, file)
+
+        print(f'Saved {json_path}')
+
+        np.savez(npz_path, 
+                 ret=ret,
+                 Kl=Kl,
+                 Dl=Dl,
+                 Kr=Kr,
+                 Dr=Dr,
+                 R=R,
+                 T=T,
+                 E=E,
+                 F=F)
+        
+        print(f'Saved {npz_path}')
+
     def save(self):
         for camera in self.get_valid_cameras():
             camera.save()
 
+        if self.has_extrinsics():
+            self.save_extrinsics()
+
     def has_calibrations(self):
         return self.get_valid_camera_count() > 0
     
+    def has_extrinsics(self):
+        return self.extrinsics is not None
+
     def is_complete(self):
         return self.has_calibrations()
 
@@ -480,6 +532,51 @@ class ArucoRig:
             return "No calibrated cameras"
         return "No error"
 
+    def stereo_calibrate(self, aruco:ArucoHelper, cam_a:ArucoCamera, cam_b:ArucoCamera):
+        mtx_a,mtx_b=cam_a.intrinsics['mtx'],cam_b.intrinsics['mtx']
+        dist_a,dist_b=cam_a.intrinsics['dist'],cam_b.intrinsics['dist']
+
+        fail_a,fail_b = cam_a.failed_image_indicies,cam_b.failed_image_indicies
+        img_a,img_b = cam_a.images,cam_b.images
+        imgc_a,imgc_b = len(img_a),len(img_b)
+        imgc_min = min(imgc_a, imgc_b)
+        allfail=fail_a+fail_b
+
+        objpoints,imgpoints_a,imgpoints_b=[],[],[]
+
+        for i in range(imgc_min):
+            if i in allfail:
+                continue
+            ccs_a, cids_a=cam_a.images[i].charuco_corners,cam_a.images[i].charuco_ids
+            ccs_b, cids_b=cam_b.images[i].charuco_corners,cam_b.images[i].charuco_ids
+            op_a,ip_a=cv2.aruco.getBoardObjectAndImagePoints(aruco.board, ccs_a, cids_a)
+            op_b,ip_b=cv2.aruco.getBoardObjectAndImagePoints(aruco.board, ccs_b, cids_b)
+            if len(op_a) != len(op_b):
+                continue
+            objpoints.append(op_a)
+            imgpoints_a.append(ip_a)
+            imgpoints_b.append(ip_b)
+
+        ret, Kl, Dl, Kr, Dr, R, T, E, F = cv2.stereoCalibrate(
+            objpoints, imgpoints_a, imgpoints_b,
+            mtx_a, dist_a, mtx_b, dist_b,
+            cam_a.shape, criteria=aruco.criteria, flags=cv2.CALIB_FIX_INTRINSIC
+        )
+
+        self.extrinsics = {
+            'ret': ret,
+            'Kl': Kl,
+            'Dl': Dl,
+            'Kr': Kr,
+            'Dr': Dr,
+            'R': R,
+            'T': T,
+            'E': E,
+            'F': F,
+        }
+
+        return True
+
     def process(self, aruco:ArucoHelper):
         if not self.has_cameras():
             return False
@@ -487,6 +584,11 @@ class ArucoRig:
             self.calibrations(aruco)
         if not self.has_calibrations():
             return False
+        if not self.has_extrinsics() and self.get_valid_camera_count() > 1:
+            print('Valid stereo rig detected')
+            cam_a,cam_b=self.get_valid_cameras()[:2]
+            if not self.stereo_calibrate(aruco, cam_a, cam_b):
+                return False
         return True
 
 if __name__ == "__main__":
