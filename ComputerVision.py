@@ -162,7 +162,7 @@ class Device:
         'buffersize': cv2.CAP_PROP_BUFFERSIZE,
     }
 
-    def __init__(self, camera_id_or_path, name:str=None, auto_open:bool=True):
+    def __init__(self, camera_id_or_path, name:str=None, auto_open:bool=True, params:dict=None):
         self.device = None
         self.size = None
         self.path = camera_id_or_path
@@ -170,6 +170,9 @@ class Device:
 
         if self.path is not None and auto_open:
             self.open(camera_id_or_path)
+
+        if params is not None and self.is_open():
+            self.set_parameters(**params)
 
     def __del__(self):
         self.close()
@@ -240,7 +243,7 @@ class Device:
         self.device.set(self.get_key(key), value)
 
     def set_parameters(self, **kwargs):
-        for key, value in kwargs:
+        for key, value in kwargs.items():
             self.set_parameter(key, value)
 
 
@@ -369,8 +372,8 @@ class DeviceThread:
                 self.loop_count += 1
 
                 self.thread_wait()
-        except:
-            print('Device thread threw exception')
+        except Exception as e:
+            print('Device thread threw exception\n',e)
         finally:
             if self.working_lock.locked():
                 self.working_lock.release()
@@ -410,7 +413,6 @@ class DeviceThread:
             return    
     
         self.join()
-
 
 class Capture:
     def __init__(self, devices:list[Device]=None, camera_count:int=10, fps:int=30, auto_find_devices:bool=True):
@@ -528,8 +530,8 @@ class Capture:
         return devices
     
 class CaptureThread:
-    def __init__(self, capture:Capture=None, remove_closed:bool=True, stop_on_no_devices:bool=True, auto_start_device_threads:bool=True):
-        self.capture = capture if capture is not None else Capture()
+    def __init__(self, capture:Capture=None, remove_closed:bool=True, stop_on_no_devices:bool=True, auto_start_device_threads:bool=True, devices:list[Device]=None):
+        self.capture = capture if capture is not None else Capture(devices=devices)
         self.device_threads = []
         self.condition = Condition()
         self.running = False
@@ -554,7 +556,11 @@ class CaptureThread:
             thread.wait(timeout)
 
     def get_worker_count(self) -> int:
-        return len(self.device_threads)
+        count = 0
+        for device in self.device_threads:
+            if device.is_thread_active():
+                count += 1
+        return count
 
     def has_workers(self) -> bool:
         return self.get_worker_count() > 0
@@ -678,16 +684,16 @@ class CaptureThread:
         self.join()
         
 class CapturePreview:
-    def __init__(self, capture:Capture=None, auto_start:bool=True):
-        self.capture_thread = CaptureThread(capture)
+    def __init__(self, capture:Capture=None, auto_start:bool=True, devices:list[Device]=None):
+        self.capture_thread = CaptureThread(capture, devices=devices)
         if auto_start:
             self.start()
 
     def start(self):
         try:
             self.capture_thread.loop(self.callback)
-        except:
-            print('CaptureThread loop threw exception')
+        except Exception as e:
+            print('CaptureThread loop threw exception\n',e)
 
         self.capture_thread.stop()
         cv2.destroyAllWindows()
@@ -700,3 +706,123 @@ class CapturePreview:
         
         for device, frame in frames:
             cv2.imshow(device.get_name(), frame)
+
+class DeviceIntrinsics:
+    def __init__(self, matrix=None, distortion=None):
+        self.matrix = matrix
+        self.distortion = distortion
+
+        self.matrix = self.get_matrix()
+        self.distortion = self.get_distortion()
+
+    def load_data(data:dict):
+        names = {
+            'mtx': 'matrix',
+            'dist': 'distortion',
+            'matrix': 'matrix',
+            'distortion': 'distortion',
+        }
+
+        values = {}
+
+        for key in set(names.values()):
+            values[key] = None
+
+        for key in data.keys():
+            if key in names:
+                values[names[key]] = data[key]
+
+        return DeviceIntrinsics(
+            values['matrix'],
+            values['distortion'],
+        )
+
+    def load_npz(path):
+        params=np.load(path)
+        return DeviceIntrinsics.load_data(params)
+
+    def save_npz(self, path):
+        np.savez(path, mtx=self.matrix, dist=self.distortion)
+
+    def has_matrix(self):
+        return self.matrix is not None and self.matrix.size > 0
+    
+    def has_distortion(self):
+        return self.distortion is not None and self.distortion.size > 0
+
+    def get_matrix(self):
+        if not self.has_matrix():
+            return np.identity(3)
+        return self.matrix
+
+    def get_distortion(self):
+        if not self.has_distortion():
+            return np.asarray([[0.0,0.0,0.0,0.0,0.0]])
+        return self.distortion
+
+class FrameHelper:
+    def __init__(self, intrinsics:DeviceIntrinsics=None):
+        self.intrinsics=intrinsics if intrinsics is not None else DeviceIntrinsics()
+
+    def undistort(self, frame) -> MatLike:
+        return cv2.undistort(
+            frame,
+            cameraMatrix=self.intrinsics.matrix,
+            distCoeffs=self.intrinsics.distortion,
+        )
+    
+    def size_tuple(self, frame:MatLike) -> tuple[int, int]:
+        return frame.shape[-2::-1]
+    
+    def size_scale(self, frame:MatLike, scale:float=1.0) -> tuple[int, int]:
+        x,y=self.size_tuple(frame)
+        inv=1/scale
+        return (int(x//inv), int(y//inv))
+
+    def size(self, frame:MatLike) -> Size:
+        x,y=self.size_tuple(frame)
+        return Size(x, y)
+
+    def scale(self, frame, scale:float=1.0, interpolation:int=cv2.INTER_LINEAR) -> MatLike:
+        s=self.size_scale(frame, scale)
+        return cv2.resize(frame, dsize=s, interpolation=interpolation)
+
+class UndistortDevice(Device):
+    """
+    CapturePreview(
+        devices=[
+            cv.UndistortDevice(
+                0, 
+                cv.DeviceIntrinsics.load_npz(
+                    './output/2025-06-28_22-29-12/0_calibration.npz'
+                ),
+                params={'width': 1920, 'height': 1080},
+                scale=0.3
+            )
+        ]
+    )
+    """
+    
+    def __init__(self, path, intrinsics:DeviceIntrinsics=None, auto_open:bool=True, scale:float=None, params:dict=None):
+        Device.__init__(self, path, auto_open=auto_open, params=params)
+        self.framehelper = FrameHelper(intrinsics)
+        self.scale = scale
+
+    def set_scale(self, scale=None):
+        self.scale = scale
+
+    def process(self, frame:MatLike) -> MatLike:
+        if frame is None:
+            return frame
+        
+        frame = self.framehelper.undistort(frame)
+        if self.scale is not None:
+            frame = self.framehelper.scale(frame, self.scale)
+
+        return frame
+
+    def read(self) -> MatLike:
+        return self.process(Device.read(self))
+    
+    def retrieve(self) -> MatLike:
+        return self.process(Device.retrieve(self))
