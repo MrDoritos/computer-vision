@@ -760,9 +760,45 @@ class DeviceIntrinsics:
             return np.asarray([[0.0,0.0,0.0,0.0,0.0]])
         return self.distortion
 
+class DeviceExtrinsics:
+    def __init__(self, extrinsics):
+        self.extrinsics = extrinsics
+
+    def get_intrinsics(self) -> list[DeviceIntrinsics]:
+        return self.extrinsics['devices']
+
+    def load_npz(path):
+        extrinsics = {
+            'devices': [],
+            'R':None,
+            'T':None,
+            'E':None,
+            'F':None,
+        }
+
+        names=['R', 'T', 'E', 'F']
+
+        data = np.load(path)
+
+        Kl,Dl,Kr,Dr=data['Kl'],data['Dl'],data['Kr'],data['Dr']
+
+        for key in data:
+            if key in names:
+                extrinsics[key] = data[key]
+        
+        extrinsics['devices'] = [
+            DeviceIntrinsics(Kl, Dl),
+            DeviceIntrinsics(Kr, Dr),
+        ]
+
+        return DeviceExtrinsics(extrinsics)
+
 class FrameHelper:
     def __init__(self, intrinsics:DeviceIntrinsics=None):
         self.intrinsics=intrinsics if intrinsics is not None else DeviceIntrinsics()
+
+    def gray(self, frame) -> MatLike:
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     def undistort(self, frame) -> MatLike:
         return cv2.undistort(
@@ -802,7 +838,7 @@ class UndistortDevice(Device):
         ]
     )
     """
-    
+
     def __init__(self, path, intrinsics:DeviceIntrinsics=None, auto_open:bool=True, scale:float=None, params:dict=None):
         Device.__init__(self, path, auto_open=auto_open, params=params)
         self.framehelper = FrameHelper(intrinsics)
@@ -826,3 +862,107 @@ class UndistortDevice(Device):
     
     def retrieve(self) -> MatLike:
         return self.process(Device.retrieve(self))
+    
+class StereoRigDevice(Device):
+    def __init__(self, path_left:str=None, path_right:str=None, device_left:Device=None, device_right:Device=None, extrinsics:DeviceExtrinsics=None, auto_open:bool=True, scale:float=None, params:dict=None):
+        Device.__init__(self, 'stereo', auto_open=False)
+
+        if device_left is not None:
+            self.device_left = device_left
+        else:
+            self.device_left = Device(path_left, auto_open=auto_open, params=params)
+        
+        if device_right is not None:
+            self.device_right = device_right
+        else:
+            self.device_right = Device(path_right, auto_open=auto_open, params=params)
+
+        self.extrinsics = extrinsics
+
+        self.intrinsics = self.extrinsics.get_intrinsics()
+        self.framehelper_left = FrameHelper(intrinsics=self.intrinsics[0])
+        self.framehelper_right = FrameHelper(intrinsics=self.intrinsics[1])
+        self.framehelper = FrameHelper()
+
+        self.R1 = self.R2 = self.P1 = self.P2 = self.Q = None
+        self.xmap1 = self.ymap1 = self.xmap2 = self.ymap2 = None
+        self.size = None
+        self.scale = scale
+
+        self.min_disp = 0
+        self.num_disp = 128 - self.min_disp
+        self.window = 1
+
+        self.initstereo()
+
+    def initstereo(self):
+        self.stereo = cv2.StereoSGBM.create(
+            minDisparity=self.min_disp,
+            numDisparities=self.num_disp,
+            blockSize=3,
+            P1=4*1*self.window**2,
+            P2=16*1*self.window**2,
+            disp12MaxDiff=-1,
+            uniquenessRatio=7,
+            speckleWindowSize=0,
+            speckleRange=16 
+        )
+
+    def initstereorectify(self):
+        l,r=self.intrinsics
+        e=self.extrinsics
+
+        self.R1, self.R2, self.P1, self.P2, self.Q = cv2.stereoRectify(
+            l.matrix, l.distortion,
+            r.matrix, r.distortion,
+            self.size,
+            e['R'], e['T'],
+            alpha=0
+        )
+    
+    def initundistortrectifymap(self):
+        l,r=self.intrinsics
+        
+        self.xmap1, self.ymap1 = cv2.initUndistortRectifyMap(
+            l.matrix, l.distortion,
+            self.R1, self.P1,
+            self.size,
+            cv2.CV_32FC1
+        )
+
+        self.xmap2, self.ymap2 = cv2.initUndistortRectifyMap(
+            r.matrix, r.distortion,
+            self.R2, self.P2,
+            self.size,
+            cv2.CV_32FC1
+        )
+
+    def process(self, frame_left, frame_right) -> MatLike:
+        if self.size is None:
+            self.size = self.framehelper_left.size_tuple(frame_left)
+
+        if self.R1 is None:
+            self.initstereorectify()
+
+        if self.xmap1 is None:
+            self.initundistortrectifymap()
+
+        frame_left = cv2.remap(
+            frame_left, self.xmap1, self.ymap1, cv2.INTER_LINEAR
+        )
+
+        frame_right = cv2.remap(
+            frame_right, self.xmap2, self.ymap2, cv2.INTER_LINEAR
+        )
+
+        gray_left = self.framehelper_left(frame_left)
+        gray_right = self.framehelper_right(frame_right)
+
+        disp = self.stereo.compute(gray_left, gray_right).astype(np.float32) / 16.0
+
+        disp = (disp-self.min_disp)/self.num_disp
+
+        if self.scale is not None:
+            disp = self.framehelper.scale(disp, self.scale)
+        
+        return disp
